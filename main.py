@@ -17,6 +17,10 @@ def home():
 @app.route('/clean', methods=['POST'])
 def clean_html():
     try:
+        # 🔍 Debug raw request body
+        print("🪵 Raw body received:")
+        print(request.data.decode("utf-8", errors="replace"))
+
         data = request.get_json(force=True)
         print("📥 Received data:", data)
 
