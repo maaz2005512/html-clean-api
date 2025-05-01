@@ -17,16 +17,20 @@ def home():
 @app.route('/clean', methods=['POST'])
 def clean_html():
     try:
-        # 🔍 Debug raw request body
+        # Log the raw body data for debugging purposes
         print("🪵 Raw body received:")
-        print(request.data.decode("utf-8", errors="replace"))
+        raw = request.data.decode("utf-8", errors="replace")
+        print(raw)
 
+        # Now process the incoming data as before
+        print("🔍 Parsing JSON...")
         data = request.get_json(force=True)
-        print("📥 Received data:", data)
+        print("📥 Received parsed JSON:", data)
 
         html = data.get('html')
         keywords = data.get('keywords', [])
 
+        # Further processing...
         if not html:
             return jsonify({"error": "Missing 'html' field"}), 400
         if not isinstance(html, str):
