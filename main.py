@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 from flask_cors import CORS
-import re
 
 app = Flask(__name__)
 CORS(app)
@@ -9,90 +9,74 @@ CORS(app)
 @app.route('/')
 def home():
     return jsonify({
-        "message": "Welcome to HTML Cleaner & Multi-Keyword Extractor API",
-        "usage": "POST /clean with JSON body: { 'html': '<html>', 'keywords': ['keyword1', 'keyword2'] }"
+        "message": "Welcome to HTML Cleaner API",
+        "usage": "POST /clean with 'html' and optional 'keywords' fields"
     })
 
 @app.route('/clean', methods=['POST'])
 def clean_html():
     try:
         data = request.get_json()
-        html = data.get('html', '')
+        html = data.get('html')
         keywords = data.get('keywords', [])
 
-        if not html or not isinstance(keywords, list) or len(keywords) == 0:
-            return jsonify({"error": "Provide 'html' and a list of 'keywords'"}), 400
-
-        # Normalize keywords
-        keywords = [kw.lower() for kw in keywords]
+        if not html:
+            return jsonify({"error": "Missing 'html' field"}), 400
+        if not isinstance(html, str):
+            return jsonify({"error": "'html' must be a string"}), 400
+        if not isinstance(keywords, list):
+            return jsonify({"error": "'keywords' must be a list of strings"}), 400
 
         soup = BeautifulSoup(html, 'html.parser')
 
-        for tag in soup(["script", "style", "noscript", "footer", "header"]):
+        # Remove scripts and styles
+        for tag in soup(["script", "style"]):
             tag.extract()
 
-        full_text = soup.get_text(separator='\n')
-        lines = [line.strip() for line in full_text.splitlines()]
-        clean_text = '\n'.join(line for line in lines if line)
-
-        sections = []
-
-        for heading in soup.find_all(re.compile('^h[1-6]$')):
-            section_text = ""
-            next_tag = heading.find_next_sibling()
-            paragraph_limit = 0
-
-            while next_tag and paragraph_limit < 5:
-                if next_tag.name == 'p':
-                    section_text += next_tag.get_text(separator=' ', strip=True) + " "
-                    paragraph_limit += 1
-                next_tag = next_tag.find_next_sibling()
-
-            combined_text = heading.get_text().lower() + " " + section_text.lower()
-
-            for keyword in keywords:
-                if keyword in combined_text:
-                    count = combined_text.count(keyword)
-
-                    # URL detection
-                    url = None
-                    parent_link = heading.find_parent('a', href=True)
-                    if parent_link and parent_link.get('href'):
-                        url = parent_link.get('href')
-                    elif heading.find('a', href=True):
-                        url = heading.find('a').get('href')
-                    else:
-                        link_tag = heading.find_next('a', href=True)
-                        if link_tag:
-                            url = link_tag.get('href')
-
-                    # If relative URL, patch it manually later
-                    if url and url.startswith('/'):
-                        url = "https://example.com" + url  # Replace with the base domain
-
-                    sections.append({
-                        "keyword": keyword,
-                        "heading": heading.get_text(strip=True),
-                        "context": section_text.strip(),
-                        "score": count,
-                        "url": url
-                    })
-
-        best_match = max(sections, key=lambda x: x["score"], default=None)
-
-        if best_match:
-            return jsonify({
-                "matchedKeyword": best_match["keyword"],
-                "heading": best_match["heading"],
-                "articlePreview": best_match["context"][:500] + "...",
-                "url": best_match["url"],
-                "cleanText": clean_text
-            })
+        # Try extracting URL from meta or base tags
+        url = ""
+        base = soup.find('base', href=True)
+        if base:
+            url = base['href']
         else:
-            return jsonify({
-                "message": "No keyword match found in any heading or content.",
-                "cleanText": clean_text
-            })
+            meta = soup.find('meta', attrs={"property": "og:url"})
+            if meta:
+                url = meta.get('content', '')
+
+        # Find all article sections
+        articles = soup.find_all(['article', 'section', 'div'])
+
+        best_match = {
+            "url": url,
+            "heading": None,
+            "article": None,
+            "keywords": [],
+            "match_count": 0
+        }
+
+        for block in articles:
+            text = block.get_text(separator=' ', strip=True).lower()
+            count = sum(text.count(k.lower()) for k in keywords)
+            if count > best_match["match_count"]:
+                heading = block.find(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+                snippet = ' '.join(text.split()[:100])  # first 100 words
+                best_match.update({
+                    "match_count": count,
+                    "heading": heading.get_text(strip=True) if heading else None,
+                    "article": snippet,
+                    "keywords": keywords
+                })
+
+        # Clean full HTML text
+        full_text = soup.get_text(separator=' ', strip=True)
+
+        return jsonify({
+            "url": best_match['url'],
+            "heading": best_match['heading'],
+            "article_context": best_match['article'],
+            "matched_keywords": best_match['keywords'],
+            "cleanText": full_text
+        })
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
