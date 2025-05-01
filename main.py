@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from flask_cors import CORS
+import traceback
 
 app = Flask(__name__)
 CORS(app)
@@ -16,7 +17,9 @@ def home():
 @app.route('/clean', methods=['POST'])
 def clean_html():
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
+        print("📥 Received data:", data)
+
         html = data.get('html')
         keywords = data.get('keywords', [])
 
@@ -79,7 +82,12 @@ def clean_html():
         })
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("❌ Error occurred:")
+        traceback.print_exc()
+        return jsonify({
+            "error": "Internal Server Error",
+            "details": str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
