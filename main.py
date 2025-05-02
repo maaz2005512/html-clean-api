@@ -20,6 +20,43 @@ def home():
         "usage": "POST /clean with 'html' and optional 'keywords' fields"
     })
 
+@app.route('/debug', methods=['POST'])
+def debug_request():
+    """Endpoint to debug incoming requests"""
+    try:
+        result = {
+            "content_type": request.headers.get('Content-Type', 'None'),
+            "content_length": request.content_length,
+            "headers": dict(request.headers),
+            "form_data": dict(request.form),
+            "args": dict(request.args)
+        }
+        
+        # Try to get the raw data
+        try:
+            raw_data = request.data.decode('utf-8', errors='replace')
+            # Only include first 500 chars to avoid huge responses
+            result["raw_data_preview"] = raw_data[:500] + ("..." if len(raw_data) > 500 else "")
+        except Exception as e:
+            result["raw_data_error"] = str(e)
+            
+        # Try to get JSON
+        try:
+            json_data = request.get_json(force=True, silent=True)
+            if json_data:
+                result["json_parsable"] = True
+                # Only include keys to avoid huge responses
+                result["json_keys"] = list(json_data.keys()) if isinstance(json_data, dict) else "Not a dictionary"
+            else:
+                result["json_parsable"] = False
+        except Exception as e:
+            result["json_error"] = str(e)
+            result["json_parsable"] = False
+            
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()})
+
 @app.route('/clean', methods=['POST'])
 def clean_html():
     start_time = time.time()
@@ -31,11 +68,65 @@ def clean_html():
         if content_length and content_length > 5 * 1024 * 1024:  # 5MB limit
             return jsonify({"error": "HTML content too large (>5MB)"}), 413
         
+        # Check content type and handle parsing accordingly
+        content_type = request.headers.get('Content-Type', '')
+        logger.info(f"Content-Type: {content_type}")
+        
         try:
-            data = request.get_json(force=True)
+            # Try to parse as JSON first
+            if 'application/json' in content_type.lower():
+                data = request.get_json(force=True)
+            # Handle form data
+            elif 'application/x-www-form-urlencoded' in content_type.lower():
+                data = {}
+                form_data = request.form
+                logger.info(f"Form data keys: {list(form_data.keys())}")
+                data['html'] = form_data.get('html', '')
+                keywords_str = form_data.get('keywords', '')
+                if keywords_str:
+                    if ',' in keywords_str:
+                        data['keywords'] = [k.strip() for k in keywords_str.split(',')]
+                    else:
+                        data['keywords'] = [keywords_str.strip()]
+                else:
+                    data['keywords'] = []
+            # Handle multipart form data
+            elif 'multipart/form-data' in content_type.lower():
+                data = {}
+                form_data = request.form
+                logger.info(f"Multipart form data keys: {list(form_data.keys())}")
+                data['html'] = form_data.get('html', '')
+                keywords_str = form_data.get('keywords', '')
+                if keywords_str:
+                    if ',' in keywords_str:
+                        data['keywords'] = [k.strip() for k in keywords_str.split(',')]
+                    else:
+                        data['keywords'] = [keywords_str.strip()]
+                else:
+                    data['keywords'] = []
+            # Handle raw text
+            else:
+                raw_data = request.data.decode('utf-8', errors='replace')
+                logger.info(f"Raw data received (first 100 chars): {raw_data[:100]}...")
+                
+                # Try to parse as JSON anyway as a fallback
+                try:
+                    import json
+                    data = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    # If not JSON, assume it's just the HTML content directly
+                    data = {
+                        'html': raw_data,
+                        'keywords': []
+                    }
+                    
+                    # Check if there are URL parameters for keywords
+                    keywords_param = request.args.get('keywords', '')
+                    if keywords_param:
+                        data['keywords'] = [k.strip() for k in keywords_param.split(',')]
         except Exception as e:
-            logger.error(f"JSON parsing error: {str(e)}")
-            return jsonify({"error": "Invalid JSON format", "details": str(e)}), 400
+            logger.error(f"Data parsing error: {str(e)}")
+            return jsonify({"error": "Invalid data format", "details": str(e)}), 400
         
         html = data.get('html')
         keywords = data.get('keywords', [])
