@@ -4,7 +4,11 @@ services:
   env: python
   plan: free
   buildCommand: pip install -r requirements.txt
-  startCommand: python main.py
+  startCommand: gunicorn main:app
   envVars:
     - key: PORT
-      value: 5000
+      value: 10000
+    - key: PYTHON_VERSION
+      value: 3.9.0
+    - key: WEB_CONCURRENCY
+      value: 1
