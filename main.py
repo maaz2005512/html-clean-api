@@ -107,7 +107,7 @@ def clean_html():
                         total_keywords_matched += keyword_count
 
         processing_time = time.time() - start_time
-        logger.info(f"Processing completed in {processing_time:.2f} seconds
+        logger.info(f"Processing completed in {processing_time:.2f} seconds")
 
         # Return the response with all matched articles
         return jsonify({
