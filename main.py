@@ -9,87 +9,74 @@ import html
 import re
 from dateutil import parser as dparser
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 app = Flask(__name__)
 CORS(app)
+logging.basicConfig(level=logging.INFO)
 
 @app.route('/')
 def home():
-    return jsonify({"message": "Welcome to HTML Cleaner API"})
+    return jsonify({"message": "HTML Keyword Extractor API"})
 
 @app.route('/clean', methods=['POST'])
 def clean_html():
-    start_time = time.time()
     try:
-        data = request.get_json()
+        data = request.get_json(force=True)
         html_content = data.get('html', '')
         keywords = data.get('keywords', [])
 
         if not html_content or not isinstance(html_content, str):
-            return jsonify({"error": "Invalid or missing 'html' content"}), 400
-        if not isinstance(keywords, list):
-            return jsonify({"error": "'keywords' must be a list"}), 400
+            return jsonify({"error": "Invalid or missing 'html'"}), 400
 
         soup = BeautifulSoup(html_content, 'lxml')
         articles = soup.find_all('article')
-        matches = []
-        total_keyword_hits = 0
+
+        keyword_map = {k.lower(): [] for k in keywords}
 
         for article in articles:
-            text = article.get_text(separator=' ', strip=True)
-            clean_text = html.unescape(text)
-            clean_text = re.sub(r'[\r\n\t]+', ' ', clean_text)
-            clean_text = re.sub(r'[ ]{2,}', ' ', clean_text)
-            lower_text = clean_text.lower()
+            heading_tag = article.find(['h1', 'h2', 'h3'])
+            heading = heading_tag.get_text(strip=True) if heading_tag else None
+            article_text = article.get_text(separator=' ', strip=True)
+            clean_text = html.unescape(article_text)
+            clean_text = re.sub(r'\s+', ' ', clean_text)
 
-            keyword_hits = []
+            date_text = None
+            date_match = re.search(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b', clean_text)
+            if date_match:
+                try:
+                    parsed_date = dparser.parse(date_match.group(), fuzzy=True)
+                    date_text = parsed_date.strftime('%Y-%m-%d')
+                except:
+                    date_text = None
+
+            url_tag = article.find_previous('a', href=True)
+            article_url = url_tag['href'] if url_tag else None
+
             for keyword in keywords:
-                if keyword.lower() in lower_text:
-                    count = lower_text.count(keyword.lower())
-                    total_keyword_hits += count
-                    keyword_hits.append({"keyword": keyword, "count": count})
+                k_lower = keyword.lower()
+                count = clean_text.lower().count(k_lower)
+                if count >= 2:
+                    keyword_map[k_lower].append({
+                        "heading": heading,
+                        "url": article_url,
+                        "date": date_text,
+                        "match_count": count,
+                        "article_context": ' '.join(clean_text.split()[:100])
+                    })
 
-            if keyword_hits:
-                heading = article.find(['h1', 'h2', 'h3'])
-                heading_text = heading.get_text(strip=True) if heading else None
-
-                # Extract date near heading
-                date_text = None
-                if heading:
-                    next_siblings_text = ''
-                    for sib in heading.find_all_next(string=True, limit=5):
-                        next_siblings_text += sib + ' '
-                    date_match = re.search(r'\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},\s+\d{4}\b', next_siblings_text)
-                    if date_match:
-                        date_text = date_match.group(0)
-
-                link_tag = article.find_previous('a', class_='story-link')
-                article_url = link_tag['href'] if link_tag and link_tag.has_attr('href') else None
-
-                matches.append({
-                    "heading": heading_text,
-                    "article_context": clean_text[:500],
-                    "article_url": article_url,
-                    "date": date_text,
-                    "matched_keywords": keyword_hits
+        result = []
+        for keyword, articles in keyword_map.items():
+            if articles:
+                result.append({
+                    "keyword": keyword,
+                    "total_matches": sum(a["match_count"] for a in articles),
+                    "matched_articles": articles
                 })
 
-        processing_time = time.time() - start_time
-
-        return jsonify({
-            "total_matched_articles": len(matches),
-            "total_keywords_matched": total_keyword_hits,
-            "matches": matches,
-            "processing_time_seconds": round(processing_time, 2)
-        })
+        return jsonify(result)
 
     except Exception as e:
-        logger.error(traceback.format_exc())
-        return jsonify({"error": str(e), "traceback": traceback.format_exc()}), 500
+        logging.error(traceback.format_exc())
+        return jsonify({"error": str(e), "trace": traceback.format_exc()}), 500
 
 if __name__ == '__main__':
-    import os
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(debug=True)
