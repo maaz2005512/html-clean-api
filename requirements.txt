@@ -1,6 +1,6 @@
-flask  
-flask-cors  
-beautifulsoup4  
-lxml  
-gunicorn  
+flask
+flask-cors
+beautifulsoup4
+lxml
+gunicorn
 python-dateutil
